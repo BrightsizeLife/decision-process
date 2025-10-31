@@ -61,18 +61,16 @@ aspect_module_ui <- function(id, idx, choiceA_name, choiceB_name) {
         sliderInput(ns("imp_unc"), "Uncertainty", min=0, max=1, value=0.4, step=0.01)
       ),
 
-      # Choice A group (reactive name)
-      uiOutput(ns("choiceA_header")),
+      # Presence group with 2x2 grid (reactive choice names in labels)
+      tags$h5("Presence"),
       div(class = "group-box",
-        sliderInput(ns("pres_a"), "Presence", min=0, max=1, value=0.6, step=0.01),
-        sliderInput(ns("unc_a"), "Uncertainty", min=0, max=1, value=0.5, step=0.01)
-      ),
-
-      # Choice B group (reactive name)
-      uiOutput(ns("choiceB_header")),
-      div(class = "group-box",
-        sliderInput(ns("pres_b"), "Presence", min=0, max=1, value=0.5, step=0.01),
-        sliderInput(ns("unc_b"), "Uncertainty", min=0, max=1, value=0.5, step=0.01)
+        layout_column_wrap(
+          width = 1/2,
+          sliderInput(ns("pres_a"), uiOutput(ns("label_pres_a"), inline = TRUE), min=0, max=1, value=0.6, step=0.01),
+          sliderInput(ns("unc_a"), uiOutput(ns("label_unc_a"), inline = TRUE), min=0, max=1, value=0.5, step=0.01),
+          sliderInput(ns("pres_b"), uiOutput(ns("label_pres_b"), inline = TRUE), min=0, max=1, value=0.5, step=0.01),
+          sliderInput(ns("unc_b"), uiOutput(ns("label_unc_b"), inline = TRUE), min=0, max=1, value=0.5, step=0.01)
+        )
       ),
 
       # Plot and table below sliders (full-width)
@@ -86,13 +84,21 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # Render reactive choice headers
-    output$choiceA_header <- renderUI({
-      tags$h5(choiceA_name())
+    # Render reactive slider labels
+    output$label_pres_a <- renderUI({
+      paste(choiceA_name(), "Presence")
     })
 
-    output$choiceB_header <- renderUI({
-      tags$h5(choiceB_name())
+    output$label_unc_a <- renderUI({
+      paste(choiceA_name(), "Uncertainty")
+    })
+
+    output$label_pres_b <- renderUI({
+      paste(choiceB_name(), "Presence")
+    })
+
+    output$label_unc_b <- renderUI({
+      paste(choiceB_name(), "Uncertainty")
     })
 
     # Observe include toggle and dim UI when excluded
