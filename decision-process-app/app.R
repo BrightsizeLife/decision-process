@@ -12,6 +12,18 @@ if (!requireNamespace("scales")) install.packages("scales")
 library(shiny); library(bslib); library(ggplot2)
 library(dplyr); library(tidyr); library(purrr); library(shinyjs); library(scales)
 
+# Color-blind friendly and fun palette (Okabe-Ito inspired)
+COLORS <- list(
+  orange = "#E69F00",
+  skyblue = "#56B4E9",
+  green = "#009E73",
+  yellow = "#F0E442",
+  blue = "#0072B2",
+  red = "#D55E00",
+  pink = "#CC79A7",
+  purple = "#9370DB"
+)
+
 # ---------- helpers ----------
 map_importance_to_ab <- function(v) {
   # v in [0,1]; L=(1,20) -> H=(20,1)
@@ -179,6 +191,13 @@ ui <- page_fluid(
                 lapply(1:5, function(i) aspect_module_ui(paste0("aspect", i), i))
       ),
       nav_panel("Report",
+                # Decision Summary
+                card(
+                  card_header("Decision Recommendation", class = "bg-primary"),
+                  div(style = "padding: 1rem; font-size: 1.1rem;",
+                    uiOutput("decision_summary")
+                  )
+                ),
                 # Overview cards
                 layout_column_wrap(
                   width = 1/3,
@@ -203,7 +222,9 @@ ui <- page_fluid(
                 ),
                 # Tables
                 card(
-                  card_header("Threshold Probabilities"),
+                  card_header("Advantage Thresholds"),
+                  p("Probability that one choice has a substantial advantage over the other:",
+                    style = "font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;"),
                   tableOutput("tbl_thresholds")
                 ),
                 card(
@@ -266,9 +287,9 @@ server <- function(input, output, session) {
     # Threshold probabilities
     thresholds <- c(0.05, 0.10, 0.20, 0.50)
     threshold_stats <- tibble(
-      tau = thresholds,
-      `P(A ≥ (1+τ)B)` = sapply(thresholds, function(tau) mean(A >= (1 + tau) * B)),
-      `P(B ≥ (1+τ)A)` = sapply(thresholds, function(tau) mean(B >= (1 + tau) * A))
+      `Margin` = paste0(thresholds * 100, "%"),
+      `A has this advantage` = sapply(thresholds, function(tau) mean(A >= (1 + tau) * B)),
+      `B has this advantage` = sapply(thresholds, function(tau) mean(B >= (1 + tau) * A))
     )
 
     list(
@@ -278,6 +299,51 @@ server <- function(input, output, session) {
       p_AgtB = p_AgtB, p_BgtA = p_BgtA, p_within5 = p_within5,
       threshold_stats = threshold_stats
     )
+  })
+
+  # Decision Summary
+  output$decision_summary <- renderUI({
+    stats <- report_stats()
+
+    # Determine winner
+    if (stats$p_AgtB > 0.75) {
+      strength <- if (stats$p_AgtB > 0.90) "strongly" else "likely"
+      winner <- input$choiceA
+      prob <- stats$p_AgtB
+      diff <- stats$mean_D
+      icon_col <- COLORS$green
+    } else if (stats$p_BgtA > 0.75) {
+      strength <- if (stats$p_BgtA > 0.90) "strongly" else "likely"
+      winner <- input$choiceB
+      prob <- stats$p_BgtA
+      diff <- -stats$mean_D
+      icon_col <- COLORS$blue
+    } else {
+      # Too close to call
+      return(HTML(sprintf(
+        '<div style="color: %s;"><strong>📊 The choices are very close!</strong></div>
+        <p>The analysis shows that <strong>%s</strong> and <strong>%s</strong> are within 5%% of each other with <strong>%s</strong> probability.
+        The mean difference is only <strong>%.3f points</strong> (90%% interval width: %.3f).</p>
+        <p style="color: #666; font-size: 0.95rem;">💡 Consider: Are there other factors not captured in these aspects that might tip the balance?</p>',
+        COLORS$yellow,
+        input$choiceA, input$choiceB,
+        scales::percent(stats$p_within5, accuracy = 0.1),
+        abs(stats$mean_D), stats$width_D
+      )))
+    }
+
+    HTML(sprintf(
+      '<div style="color: %s;"><strong>✨ %s is %s the better choice!</strong></div>
+      <p>Based on your decision aspects, <strong>%s</strong> outperforms with <strong>%s</strong> probability.
+      The average advantage is <strong>%.3f points</strong> (90%% interval width: %.3f).</p>
+      <p style="color: #666; font-size: 0.95rem;">💡 This recommendation is based on %d included aspect(s). Adjust the sliders or toggle aspects to explore different scenarios.</p>',
+      icon_col,
+      winner, strength,
+      winner,
+      scales::percent(prob, accuracy = 0.1),
+      abs(diff), stats$width_D,
+      length(unlist(sapply(1:5, function(i) if (aspects[[i]]$include()) aspects[[i]]$name() else NULL)))
+    ))
   })
 
   # Overview cards
@@ -319,16 +385,21 @@ server <- function(input, output, session) {
       tibble(value = stats$B, choice = input$choiceB)
     )
     ggplot(long, aes(x = value, fill = choice)) +
-      geom_density(alpha = 0.35) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
       labs(x = "Overall Score", y = "Density", fill = NULL) +
-      theme_minimal(base_size = 13)
+      theme_minimal(base_size = 13) +
+      theme(legend.position = "top",
+            legend.text = element_text(size = 12, face = "bold"))
   })
 
   output$plot_difference <- renderPlot({
     stats <- report_stats()
     ggplot(tibble(D = stats$D), aes(x = D)) +
-      geom_density(fill = "steelblue", alpha = 0.35) +
-      geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+      geom_density(fill = COLORS$purple, alpha = 0.5) +
+      geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
+      annotate("text", x = 0, y = Inf, label = "No difference",
+               vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
       labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
       theme_minimal(base_size = 13)
   })
@@ -337,15 +408,15 @@ server <- function(input, output, session) {
   output$tbl_thresholds <- renderTable({
     stats <- report_stats()
     stats$threshold_stats |>
-      mutate(across(-tau, ~scales::percent(.x, accuracy = 0.1)))
+      mutate(across(-Margin, ~scales::percent(.x, accuracy = 0.1)))
   }, striped = TRUE, bordered = TRUE, spacing = "s")
 
   output$tbl_intervals <- renderTable({
     stats <- report_stats()
     tibble(
-      Choice = c(input$choiceA, input$choiceB),
-      Mean = c(stats$mean_A, stats$mean_B),
-      `90% Width` = c(stats$width_A, stats$width_B)
+      Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+      Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
+      `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
     ) |> mutate(across(-Choice, ~round(.x, 3)))
   }, striped = TRUE, bordered = TRUE, spacing = "s")
 
@@ -385,13 +456,18 @@ server <- function(input, output, session) {
         tibble(value = stats$A, choice = input$choiceA),
         tibble(value = stats$B, choice = input$choiceB)
       ), aes(x = value, fill = choice)) +
-        geom_density(alpha = 0.35) +
+        geom_density(alpha = 0.5) +
+        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
         labs(x = "Overall Score", y = "Density", fill = NULL) +
-        theme_minimal(base_size = 13)
+        theme_minimal(base_size = 13) +
+        theme(legend.position = "top",
+              legend.text = element_text(size = 12, face = "bold"))
 
       p2 <- ggplot(tibble(D = stats$D), aes(x = D)) +
-        geom_density(fill = "steelblue", alpha = 0.35) +
-        geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+        geom_density(fill = COLORS$purple, alpha = 0.5) +
+        geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
+        annotate("text", x = 0, y = Inf, label = "No difference",
+                 vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
         labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
         theme_minimal(base_size = 13)
 
@@ -400,14 +476,14 @@ server <- function(input, output, session) {
 
       # Prepare intervals table
       intervals_tbl <- tibble(
-        Choice = c(input$choiceA, input$choiceB),
-        Mean = c(stats$mean_A, stats$mean_B),
-        `90% Width` = c(stats$width_A, stats$width_B)
+        Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+        Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
+        `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
       )
 
       # Prepare threshold stats table
       threshold_tbl <- stats$threshold_stats %>%
-        mutate(across(-tau, ~sprintf("%.1f%%", .x * 100)))
+        mutate(across(-Margin, ~sprintf("%.1f%%", .x * 100)))
 
       # Render the report
       rmarkdown::render(
