@@ -1,7 +1,12 @@
 ---
 title: "Decision Space Report"
 date: "`r format(Sys.time(), '%Y-%m-%d %H:%M:%S')`"
-output: pdf_document
+output:
+  html_document:
+    self_contained: true
+    theme: flatly
+  pdf_document:
+    keep_tex: false
 params:
   choiceA: "Choice A"
   choiceB: "Choice B"
@@ -12,17 +17,19 @@ params:
   p_AgtB: 0
   p_BgtA: 0
   p_within5: 0
-  threshold_stats: NULL
-  intervals_tbl: NULL
-  plot_dist_path: ""
-  plot_diff_path: ""
+  threshold_stats: !r NULL
+  intervals_tbl: !r NULL
+  img_overall: ""
+  img_diff: ""
   included_aspects: ""
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 library(knitr)
-library(kableExtra)
+if (requireNamespace("kableExtra", quietly = TRUE)) {
+  library(kableExtra)
+}
 ```
 
 ## Executive Summary
@@ -44,37 +51,35 @@ This report compares **`r params$choiceA`** and **`r params$choiceB`** across mu
 ## Score Distributions
 
 ```{r plot-distributions, fig.height=4}
-knitr::include_graphics(params$plot_dist_path)
+knitr::include_graphics(params$img_overall)
 ```
 
 ## Difference Distribution
 
 ```{r plot-difference, fig.height=4}
-knitr::include_graphics(params$plot_diff_path)
+knitr::include_graphics(params$img_diff)
 ```
 
-\newpage
+---
 
-## Threshold Probabilities
+## Advantage Thresholds
 
-The following table shows the probability that one choice is substantially better than the other by various threshold margins (τ):
+The following table shows the probability that one choice has a substantial advantage over the other by various margins:
 
 ```{r threshold-table}
-kable(params$threshold_stats,
-      format = "latex",
-      booktabs = TRUE,
-      caption = "Probability of exceeding threshold margins") %>%
-  kable_styling(latex_options = c("striped", "hold_position"))
+kable(params$threshold_stats, caption = "Probability of exceeding threshold margins") %>%
+  {if (requireNamespace("kableExtra", quietly = TRUE))
+    kable_styling(., bootstrap_options = c("striped", "hover"))
+   else .}
 ```
 
 ## Summary Statistics
 
 ```{r intervals-table}
-kable(params$intervals_tbl,
-      format = "latex",
-      booktabs = TRUE,
-      caption = "Mean scores and 90% interval widths") %>%
-  kable_styling(latex_options = c("striped", "hold_position"))
+kable(params$intervals_tbl, caption = "Mean scores and 90% interval widths") %>%
+  {if (requireNamespace("kableExtra", quietly = TRUE))
+    kable_styling(., bootstrap_options = c("striped", "hover"))
+   else .}
 ```
 
 ## Methodology

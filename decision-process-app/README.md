@@ -21,21 +21,30 @@ A Shiny application for comparing two choices across multiple decision aspects u
 - `shinyjs`
 - `scales`
 
-### PDF Export (Optional)
+### Report Export (Optional)
 
-To enable PDF report downloads, you'll need:
+#### HTML Export
+Requires only `rmarkdown`:
 
 ```r
 install.packages("rmarkdown")
 install.packages("knitr")
-install.packages("kableExtra")
+install.packages("kableExtra")  # Optional, for better table styling
+```
+
+HTML reports are self-contained and can be opened offline in any web browser with all plots and styles embedded.
+
+#### PDF Export
+Additionally requires `tinytex`:
+
+```r
 install.packages("tinytex")
 
-# Install TinyTeX for PDF rendering
+# Install TinyTeX for PDF rendering (one-time setup)
 tinytex::install_tinytex()
 ```
 
-**Note:** The app will work without these packages, but the PDF download button will show an error if rmarkdown is not available.
+**Note:** The app will work without these packages. Export buttons will show clear error messages with installation instructions if dependencies are missing.
 
 ## Running the App
 
@@ -48,6 +57,14 @@ Or from the command line:
 ```bash
 Rscript -e "shiny::runApp()"
 ```
+
+### Important Note for RStudio Users
+
+**For reliable downloads:** Use the "Open in Browser" button (external browser) instead of the RStudio Viewer pane. The RStudio Viewer can sometimes block or interfere with file downloads.
+
+To open in external browser:
+1. Click the "Show in new window" icon in the Viewer pane, OR
+2. Run: `shiny::runApp(launch.browser = TRUE)`
 
 ## Report Statistics
 
