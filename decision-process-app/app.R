@@ -1,4 +1,4 @@
-# app.R — Decision Space v2 (fixed sims=5000, vertical facets, lean table)
+# app.R — Decision Space v3 (vertical sliders + aspect inclusion toggle)
 
 if (!requireNamespace("shiny")) install.packages("shiny")
 if (!requireNamespace("bslib")) install.packages("bslib")
@@ -6,9 +6,11 @@ if (!requireNamespace("ggplot2")) install.packages("ggplot2")
 if (!requireNamespace("dplyr")) install.packages("dplyr")
 if (!requireNamespace("tidyr")) install.packages("tidyr")
 if (!requireNamespace("purrr")) install.packages("purrr")
+if (!requireNamespace("shinyjs")) install.packages("shinyjs")
+if (!requireNamespace("scales")) install.packages("scales")
 
 library(shiny); library(bslib); library(ggplot2)
-library(dplyr); library(tidyr); library(purrr)
+library(dplyr); library(tidyr); library(purrr); library(shinyjs); library(scales)
 
 # ---------- helpers ----------
 map_importance_to_ab <- function(v) {
@@ -26,40 +28,66 @@ beta_draws <- function(alpha, beta, n=5000) rbeta(n, alpha, beta)
 aspect_module_ui <- function(id, idx) {
   ns <- NS(id)
   card(
-    card_header(paste("Decision Aspect", idx)),
-    # Controls (left)
-    fluidRow(
-      column(
-        width = 6,
-        textInput(ns("name"), "Name of aspect", value = paste("Aspect", idx)),
-        div(class="grid grid-cols-2 gap-2",
-            sliderInput(ns("imp"), "Importance (L→H)", min=0, max=1, value=0.5, step=0.01),
-            sliderInput(ns("imp_unc"), "Importance Uncertainty (L→H)", min=0, max=1, value=0.4, step=0.01)
-        ),
-        tags$hr(),
-        h6("Choice A"),
-        div(class="grid grid-cols-2 gap-2",
-            sliderInput(ns("pres_a"), "Presence (L→H)", min=0, max=1, value=0.6, step=0.01),
-            sliderInput(ns("unc_a"),  "Uncertainty (L→H)", min=0, max=1, value=0.5, step=0.01)
-        ),
-        h6("Choice B"),
-        div(class="grid grid-cols-2 gap-2",
-            sliderInput(ns("pres_b"), "Presence (L→H)", min=0, max=1, value=0.5, step=0.01),
-            sliderInput(ns("unc_b"),  "Uncertainty (L→H)", min=0, max=1, value=0.5, step=0.01)
-        )
-      ),
-      # Visuals (right) — own column to avoid overlap
-      column(
-        width = 6,
-        plotOutput(ns("plot"), height = "340px"),
-        tableOutput(ns("params"))
+    card_header(
+      div(style = "display: flex; justify-content: space-between; align-items: center;",
+        span(paste("Decision Aspect", idx)),
+        checkboxInput(ns("include"), "Include in analysis", value = TRUE, width = "auto")
       )
+    ),
+    # Main content container with conditional styling
+    div(id = ns("content_wrapper"),
+      # Name input
+      textInput(ns("name"), "Name of aspect", value = paste("Aspect", idx)),
+
+      # Importance sliders (vertical stack)
+      tags$h6(style = "margin-top: 0.5rem; margin-bottom: 0.25rem;", "Importance"),
+      div(style = "margin-bottom: 0.75rem;",
+        sliderInput(ns("imp"), "Level", min=0, max=1, value=0.5, step=0.01),
+        sliderInput(ns("imp_unc"), "Uncertainty", min=0, max=1, value=0.4, step=0.01)
+      ),
+
+      tags$hr(style = "margin: 0.5rem 0;"),
+
+      # Choice A sliders (vertical stack)
+      tags$h6(style = "margin-top: 0.5rem; margin-bottom: 0.25rem;", "Choice A"),
+      div(style = "margin-bottom: 0.75rem;",
+        sliderInput(ns("pres_a"), "Presence", min=0, max=1, value=0.6, step=0.01),
+        sliderInput(ns("unc_a"), "Uncertainty", min=0, max=1, value=0.5, step=0.01)
+      ),
+
+      # Choice B sliders (vertical stack)
+      tags$h6(style = "margin-top: 0.5rem; margin-bottom: 0.25rem;", "Choice B"),
+      div(style = "margin-bottom: 0.75rem;",
+        sliderInput(ns("pres_b"), "Presence", min=0, max=1, value=0.5, step=0.01),
+        sliderInput(ns("unc_b"), "Uncertainty", min=0, max=1, value=0.5, step=0.01)
+      ),
+
+      # Plot and table below sliders (full-width)
+      plotOutput(ns("plot"), height = "340px"),
+      tableOutput(ns("params"))
     )
   )
 }
 
 aspect_module_server <- function(id) {
   moduleServer(id, function(input, output, session) {
+    ns <- session$ns
+
+    # Observe include toggle and dim UI when excluded
+    observe({
+      if (input$include) {
+        shinyjs::runjs(sprintf(
+          "document.getElementById('%s').style.opacity = '1';",
+          ns("content_wrapper")
+        ))
+      } else {
+        shinyjs::runjs(sprintf(
+          "document.getElementById('%s').style.opacity = '0.4';",
+          ns("content_wrapper")
+        ))
+      }
+    })
+
     params <- reactive({
       # importance
       imp_ab    <- map_importance_to_ab(input$imp)
@@ -76,14 +104,14 @@ aspect_module_server <- function(id) {
       pb_scale  <- map_uncertainty_scale(input$unc_b)
       pb_a      <- pb_ab["alpha"]*pb_scale
       pb_b      <- pb_ab["beta"] *pb_scale
-      
+
       tibble(
         dist  = c("Importance", "Presence A", "Presence B"),
         alpha = c(imp_a, pa_a, pb_a),
         beta  = c(imp_b, pa_b, pb_b)
       )
     })
-    
+
     draws <- reactive({
       p <- params()
       tibble(
@@ -94,7 +122,7 @@ aspect_module_server <- function(id) {
         mutate(scoreA = imp * presA,
                scoreB = imp * presB)
     })
-    
+
     # vertical facets (one row per distribution)
     output$plot <- renderPlot({
       d <- draws()
@@ -112,7 +140,7 @@ aspect_module_server <- function(id) {
         theme(strip.placement = "outside",
               strip.background = element_blank())
     })
-    
+
     # lean table: mean + 90% interval WIDTH (95th - 5th)
     output$params <- renderTable({
       d <- draws()
@@ -125,8 +153,12 @@ aspect_module_server <- function(id) {
       ) |>
         mutate(across(-dist, ~round(.x, 3)))
     }, striped = TRUE, bordered = TRUE, spacing = "s")
-    
-    list(name = reactive(input$name), draws = draws)
+
+    list(
+      name = reactive(input$name),
+      draws = draws,
+      include = reactive(input$include)
+    )
   })
 }
 
@@ -134,6 +166,7 @@ aspect_module_server <- function(id) {
 theme <- bs_theme(bootswatch = "flatly")
 ui <- page_fluid(
   theme = theme,
+  useShinyjs(),
   titlePanel("Decision Space — Two-Choice, Five-Aspect Simulator"),
   layout_sidebar(
     sidebar = sidebar(
@@ -167,7 +200,13 @@ server <- function(input, output, session) {
   aspects <- lapply(1:5, function(i) aspect_module_server(paste0("aspect", i)))
   
   overall_draws <- reactive({
-    mats <- lapply(aspects, function(m) m$draws())
+    # Filter to only included aspects
+    included_aspects <- aspects[sapply(aspects, function(m) m$include())]
+
+    # If no aspects are included, return NULL
+    if (length(included_aspects) == 0) return(NULL)
+
+    mats <- lapply(included_aspects, function(m) m$draws())
     reduce(mats, function(acc, d){
       if (is.null(acc)) return(d %>% select(scoreA, scoreB))
       acc + d %>% select(scoreA, scoreB)
@@ -199,15 +238,23 @@ server <- function(input, output, session) {
   
   output$summary_txt <- renderText({
     od <- overall_draws(); req(od)
+
+    # Get included aspect names
+    included_names <- sapply(1:5, function(i) {
+      if (aspects[[i]]$include()) aspects[[i]]$name() else NULL
+    })
+    included_names <- unlist(included_names[!sapply(included_names, is.null)])
+
     pAgtB <- mean(od$scoreA > od$scoreB)
     paste0(
-      "Choices: ", input$choiceA, " vs ", input$choiceB, "
-Computation (per aspect):
-  Importance ~ Beta(α,β) from Importance slider, scaled by its Uncertainty;
-  Presence_A, Presence_B ~ Beta(α,β) from Presence sliders, scaled by their Uncertainty.
-Scores: Score_A = Σ Importance × Presence_A; Score_B analogously.
-Sims: 5,000.
-Result: P(A > B) = ", scales::percent(pAgtB, accuracy=0.1),
+      "Choices: ", input$choiceA, " vs ", input$choiceB, "\n",
+      "Included aspects (", length(included_names), "/5): ", paste(included_names, collapse = ", "), "\n\n",
+      "Computation (per aspect):\n",
+      "  Importance ~ Beta(α,β) from Importance slider, scaled by its Uncertainty;\n",
+      "  Presence_A, Presence_B ~ Beta(α,β) from Presence sliders, scaled by their Uncertainty.\n",
+      "Scores: Score_A = Σ Importance × Presence_A; Score_B analogously.\n",
+      "Sims: 5,000.\n",
+      "Result: P(A > B) = ", scales::percent(pAgtB, accuracy=0.1),
       "\nMeans/width_90 shown above."
     )
   })
