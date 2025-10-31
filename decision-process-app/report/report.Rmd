@@ -21,6 +21,8 @@ params:
   intervals_tbl: !r NULL
   img_overall: ""
   img_diff: ""
+  img_aspects: ""
+  aspect_tbl: !r NULL
   included_aspects: ""
 ---
 
@@ -77,6 +79,23 @@ kable(params$threshold_stats, caption = "Probability of exceeding threshold marg
 
 ```{r intervals-table}
 kable(params$intervals_tbl, caption = "Mean scores and 90% interval widths") %>%
+  {if (requireNamespace("kableExtra", quietly = TRUE))
+    kable_styling(., bootstrap_options = c("striped", "hover"))
+   else .}
+```
+
+## Per-Aspect Comparison
+
+This section breaks down how each aspect contributes to the overall decision.
+
+```{r plot-aspects, out.width="100%", fig.align="center"}
+knitr::include_graphics(params$img_aspects)
+```
+
+The following table shows detailed statistics for each aspect:
+
+```{r aspect-table}
+kable(params$aspect_tbl, caption = "Per-aspect comparison statistics") %>%
   {if (requireNamespace("kableExtra", quietly = TRUE))
     kable_styling(., bootstrap_options = c("striped", "hover"))
    else .}

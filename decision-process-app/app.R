@@ -196,7 +196,17 @@ ui <- page_fluid(
   theme = theme,
   useShinyjs(),
   tags$head(tags$link(rel = "stylesheet", type = "text/css", href = "app.css")),
-  titlePanel("Decision Space — Two-Choice, Five-Aspect Simulator"),
+  div(style = "position: relative;",
+    titlePanel("Decision Space — Two-Choice, Five-Aspect Simulator"),
+    tags$a(
+      href = "https://github.com/BrightsizeLife/decision-process",
+      target = "_blank", class = "gh-link",
+      title = "View on GitHub",
+      HTML('<svg class="gh" viewBox="0 0 16 16" aria-hidden="true">
+        <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+      </svg>')
+    )
+  ),
   layout_sidebar(
     sidebar = sidebar(
       textInput("choiceA", "Choice A name", "Choice A"),
@@ -247,6 +257,14 @@ ui <- page_fluid(
                 card(
                   card_header("Summary Statistics"),
                   tableOutput("tbl_intervals")
+                ),
+                # Per-aspect comparison
+                card(
+                  card_header("Per-Aspect Comparison"),
+                  p("See how each aspect favors the two choices:",
+                    style = "font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;"),
+                  plotOutput("plot_aspects", height = "400px"),
+                  tableOutput("tbl_aspects")
                 ),
                 # Download buttons
                 card(
@@ -324,12 +342,42 @@ server <- function(input, output, session) {
       !!paste0(nameB, " has this advantage") := sapply(thresholds, function(tau) mean(B >= (1 + tau) * A))
     )
 
+    # Per-aspect comparison statistics
+    included_aspects <- aspects[sapply(aspects, function(m) m$include())]
+    aspect_stats <- map_dfr(included_aspects, function(m) {
+      d <- m$draws()
+      scoreA_i <- d$imp * d$presA
+      scoreB_i <- d$imp * d$presB
+      diff_i <- scoreA_i - scoreB_i
+
+      tibble(
+        Aspect = m$name(),
+        !!paste0("Mean ", nameA) := mean(scoreA_i),
+        !!paste0("Mean ", nameB) := mean(scoreB_i),
+        !!paste0("Diff (", nameA, " - ", nameB, ")") := mean(diff_i),
+        !!paste0("P(", nameA, " > ", nameB, ")") := mean(scoreA_i > scoreB_i),
+        !!paste0("Width90 ", nameA) := quantile(scoreA_i, 0.95) - quantile(scoreA_i, 0.05),
+        !!paste0("Width90 ", nameB) := quantile(scoreB_i, 0.95) - quantile(scoreB_i, 0.05)
+      )
+    })
+
+    # Per-aspect draws for small-multiples plot
+    aspect_draws <- map_dfr(included_aspects, function(m) {
+      d <- m$draws()
+      bind_rows(
+        tibble(aspect = m$name(), choice = nameA, value = d$imp * d$presA),
+        tibble(aspect = m$name(), choice = nameB, value = d$imp * d$presB)
+      )
+    })
+
     list(
       A = A, B = B, D = D, R = R,
       mean_A = mean_A, mean_B = mean_B, mean_D = mean_D,
       width_A = width_A, width_B = width_B, width_D = width_D,
       p_AgtB = p_AgtB, p_BgtA = p_BgtA, p_within5 = p_within5,
-      threshold_stats = threshold_stats
+      threshold_stats = threshold_stats,
+      aspect_stats = aspect_stats,
+      aspect_draws = aspect_draws
     )
   })
 
@@ -364,17 +412,33 @@ server <- function(input, output, session) {
       )))
     }
 
+    # Get top contributing aspects by absolute difference
+    n_aspects <- length(stats$aspect_stats$Aspect)
+    top_aspects <- ""
+    if (nrow(stats$aspect_stats) >= 2) {
+      # Get column name for difference
+      diff_col_name <- names(stats$aspect_stats)[grepl("^Diff", names(stats$aspect_stats))]
+      top_2 <- stats$aspect_stats %>%
+        arrange(desc(abs(.data[[diff_col_name]]))) %>%
+        slice(1:min(2, n())) %>%
+        pull(Aspect)
+      top_aspects <- sprintf("<br><span style='color: #666; font-size: 0.95rem;'>🎯 Biggest drivers: <b>%s</b></span>",
+                            paste(top_2, collapse = ", "))
+    }
+
     HTML(sprintf(
-      '<div style="color: %s;"><strong>✨ %s is %s the better choice!</strong></div>
+      '<div style="color: %s;"><strong>✨ <b>%s</b> is likely the better choice!</strong></div>
       <p>Based on your decision aspects, <strong>%s</strong> outperforms with <strong>%s</strong> probability.
-      The average advantage is <strong>%.3f points</strong> (90%% interval width: %.3f).</p>
-      <p style="color: #666; font-size: 0.95rem;">💡 This recommendation is based on %d included aspect(s). Adjust the sliders or toggle aspects to explore different scenarios.</p>',
+      The average advantage is <strong>%s</strong> points (90%% interval width: <strong>%s</strong>).</p>
+      <p style="color: #666; font-size: 0.95rem;">💡 This recommendation reflects <b>%d</b> included aspect(s). Toggle aspects to test scenarios.</p>%s',
       icon_col,
-      winner, strength,
+      winner,
       winner,
       scales::percent(prob, accuracy = 0.1),
-      abs(diff), stats$width_D,
-      length(unlist(sapply(1:5, function(i) if (aspects[[i]]$include()) aspects[[i]]$name() else NULL)))
+      sprintf("%.3f", abs(diff)),
+      sprintf("%.3f", stats$width_D),
+      n_aspects,
+      top_aspects
     ))
   })
 
@@ -473,6 +537,34 @@ server <- function(input, output, session) {
     ) |> mutate(across(-Choice, ~round(.x, 3)))
   }, striped = TRUE, bordered = TRUE, spacing = "s")
 
+  # Per-aspect comparison outputs
+  output$plot_aspects <- renderPlot({
+    stats <- report_stats()
+    req(nrow(stats$aspect_draws) > 0)
+
+    ggplot(stats$aspect_draws, aes(x = value, fill = choice)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
+      facet_wrap(~aspect, ncol = 1, scales = "free", strip.position = "left") +
+      labs(x = "Score Contribution", y = NULL, fill = NULL) +
+      theme_minimal(base_size = 12) +
+      theme(
+        legend.position = "top",
+        legend.text = element_text(size = 11, face = "bold"),
+        strip.placement = "outside",
+        strip.background = element_blank(),
+        strip.text = element_text(face = "bold", hjust = 0)
+      )
+  })
+
+  output$tbl_aspects <- renderTable({
+    stats <- report_stats()
+    req(nrow(stats$aspect_stats) > 0)
+
+    stats$aspect_stats |>
+      mutate(across(where(is.numeric), ~round(.x, 3)))
+  }, striped = TRUE, bordered = TRUE, spacing = "s")
+
   # HTML Download Handler
   output$dl_html <- downloadHandler(
     filename = function() {
@@ -502,6 +594,7 @@ server <- function(input, output, session) {
       # Save plots to temp files
       overall_png <- file.path(tempdir(), "overall.png")
       diff_png <- file.path(tempdir(), "diff.png")
+      aspects_png <- file.path(tempdir(), "aspects.png")
 
       p1 <- ggplot(bind_rows(
         tibble(value = stats$A, choice = choiceA_name()),
@@ -522,8 +615,23 @@ server <- function(input, output, session) {
         labs(x = paste(choiceA_name(), "-", choiceB_name()), y = "Density") +
         theme_minimal(base_size = 13)
 
+      p3 <- ggplot(stats$aspect_draws, aes(x = value, fill = choice)) +
+        geom_density(alpha = 0.5) +
+        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
+        facet_wrap(~aspect, ncol = 1, scales = "free", strip.position = "left") +
+        labs(x = "Score Contribution", y = NULL, fill = NULL) +
+        theme_minimal(base_size = 12) +
+        theme(
+          legend.position = "top",
+          legend.text = element_text(size = 11, face = "bold"),
+          strip.placement = "outside",
+          strip.background = element_blank(),
+          strip.text = element_text(face = "bold", hjust = 0)
+        )
+
       ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
       ggsave(diff_png, p2, width = 8, height = 4, dpi = 150)
+      ggsave(aspects_png, p3, width = 8, height = 2 * nrow(stats$aspect_stats), dpi = 150)
 
       # Prepare intervals table
       intervals_tbl <- tibble(
@@ -556,6 +664,8 @@ server <- function(input, output, session) {
           intervals_tbl = intervals_tbl,
           img_overall = overall_png,
           img_diff = diff_png,
+          img_aspects = aspects_png,
+          aspect_tbl = stats$aspect_stats,
           included_aspects = included_text
         ),
         envir = new.env(parent = globalenv())
@@ -613,6 +723,7 @@ server <- function(input, output, session) {
       # Save plots to temp files
       overall_png <- file.path(tempdir(), "overall.png")
       diff_png <- file.path(tempdir(), "diff.png")
+      aspects_png <- file.path(tempdir(), "aspects.png")
 
       p1 <- ggplot(bind_rows(
         tibble(value = stats$A, choice = choiceA_name()),
@@ -633,8 +744,23 @@ server <- function(input, output, session) {
         labs(x = paste(choiceA_name(), "-", choiceB_name()), y = "Density") +
         theme_minimal(base_size = 13)
 
+      p3 <- ggplot(stats$aspect_draws, aes(x = value, fill = choice)) +
+        geom_density(alpha = 0.5) +
+        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
+        facet_wrap(~aspect, ncol = 1, scales = "free", strip.position = "left") +
+        labs(x = "Score Contribution", y = NULL, fill = NULL) +
+        theme_minimal(base_size = 12) +
+        theme(
+          legend.position = "top",
+          legend.text = element_text(size = 11, face = "bold"),
+          strip.placement = "outside",
+          strip.background = element_blank(),
+          strip.text = element_text(face = "bold", hjust = 0)
+        )
+
       ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
       ggsave(diff_png, p2, width = 8, height = 4, dpi = 150)
+      ggsave(aspects_png, p3, width = 8, height = 2 * nrow(stats$aspect_stats), dpi = 150)
 
       # Prepare intervals table
       intervals_tbl <- tibble(
@@ -667,6 +793,8 @@ server <- function(input, output, session) {
           intervals_tbl = intervals_tbl,
           img_overall = overall_png,
           img_diff = diff_png,
+          img_aspects = aspects_png,
+          aspect_tbl = stats$aspect_stats,
           included_aspects = included_text
         ),
         envir = new.env(parent = globalenv())
