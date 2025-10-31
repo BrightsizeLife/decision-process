@@ -12,6 +12,18 @@ if (!requireNamespace("scales")) install.packages("scales")
 library(shiny); library(bslib); library(ggplot2)
 library(dplyr); library(tidyr); library(purrr); library(shinyjs); library(scales)
 
+# Color-blind friendly and fun palette (Okabe-Ito inspired)
+COLORS <- list(
+  orange = "#E69F00",
+  skyblue = "#56B4E9",
+  green = "#009E73",
+  yellow = "#F0E442",
+  blue = "#0072B2",
+  red = "#D55E00",
+  pink = "#CC79A7",
+  purple = "#9370DB"
+)
+
 # ---------- helpers ----------
 map_importance_to_ab <- function(v) {
   # v in [0,1]; L=(1,20) -> H=(20,1)
@@ -178,15 +190,59 @@ ui <- page_fluid(
       nav_panel("Decision Space",
                 lapply(1:5, function(i) aspect_module_ui(paste0("aspect", i), i))
       ),
-      nav_panel("Results (visual)",
+      nav_panel("Report",
+                # Decision Summary
                 card(
-                  card_header("Overall score distributions (5,000 sims)"),
-                  plotOutput("overall_plot", height = "360px"),
-                  tableOutput("overall_tbl")
+                  card_header("Decision Recommendation", class = "bg-primary"),
+                  div(style = "padding: 1rem; font-size: 1.1rem;",
+                    uiOutput("decision_summary")
+                  )
+                ),
+                # Overview cards
+                layout_column_wrap(
+                  width = 1/3,
+                  card(card_header("Mean A"), verbatimTextOutput("card_meanA", placeholder = TRUE)),
+                  card(card_header("Mean B"), verbatimTextOutput("card_meanB", placeholder = TRUE)),
+                  card(card_header("Mean Difference"), verbatimTextOutput("card_meanD", placeholder = TRUE))
+                ),
+                layout_column_wrap(
+                  width = 1/3,
+                  card(card_header("P(A > B)"), verbatimTextOutput("card_pAgtB", placeholder = TRUE)),
+                  card(card_header("P(B > A)"), verbatimTextOutput("card_pBgtA", placeholder = TRUE)),
+                  card(card_header("P(within 5%)"), verbatimTextOutput("card_pWithin5", placeholder = TRUE))
+                ),
+                # Plots
+                card(
+                  card_header("Score Distributions"),
+                  plotOutput("plot_distributions", height = "300px")
+                ),
+                card(
+                  card_header("Difference Distribution (A - B)"),
+                  plotOutput("plot_difference", height = "300px")
+                ),
+                # Tables
+                card(
+                  card_header("Advantage Thresholds"),
+                  p("Probability that one choice has a substantial advantage over the other:",
+                    style = "font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;"),
+                  tableOutput("tbl_thresholds")
+                ),
+                card(
+                  card_header("Summary Statistics"),
+                  tableOutput("tbl_intervals")
+                ),
+                # Download buttons
+                card(
+                  card_header("Export"),
+                  p("Download a complete report with all statistics and visualizations:",
+                    style = "font-size: 0.9rem; color: #666; margin-bottom: 1rem;"),
+                  div(style = "display: flex; gap: 0.5rem;",
+                    downloadButton("dl_html", "Download HTML", class = "btn-primary"),
+                    downloadButton("dl_pdf", "Download PDF", class = "btn-secondary")
+                  ),
+                  p(style = "font-size: 0.85rem; color: #999; margin-top: 0.5rem;",
+                    "Note: Use 'Open in Browser' for downloads if using RStudio Viewer")
                 )
-      ),
-      nav_panel("Summary (text)",
-                verbatimTextOutput("summary_txt")
       )
     )
   )
@@ -213,51 +269,366 @@ server <- function(input, output, session) {
     }, .init = NULL)
   })
   
-  output$overall_plot <- renderPlot({
+  # Comprehensive statistics
+  report_stats <- reactive({
     od <- overall_draws(); req(od)
-    long <- bind_rows(
-      transmute(od, value = scoreA, choice = input$choiceA),
-      transmute(od, value = scoreB, choice = input$choiceB)
+
+    A <- od$scoreA
+    B <- od$scoreB
+    D <- A - B
+    R <- A / pmax(B, 1e-6)  # Clip small denominators
+
+    # Basic stats
+    mean_A <- mean(A)
+    mean_B <- mean(B)
+    mean_D <- mean(D)
+    width_A <- quantile(A, 0.95) - quantile(A, 0.05)
+    width_B <- quantile(B, 0.95) - quantile(B, 0.05)
+    width_D <- quantile(D, 0.95) - quantile(D, 0.05)
+
+    # Probabilities
+    p_AgtB <- mean(A > B)
+    p_BgtA <- mean(B > A)
+    p_within5 <- mean(R >= 0.95 & R <= 1.05)
+
+    # Threshold probabilities
+    thresholds <- c(0.05, 0.10, 0.20, 0.50)
+    threshold_stats <- tibble(
+      `Margin` = paste0(thresholds * 100, "%"),
+      `A has this advantage` = sapply(thresholds, function(tau) mean(A >= (1 + tau) * B)),
+      `B has this advantage` = sapply(thresholds, function(tau) mean(B >= (1 + tau) * A))
     )
-    ggplot(long, aes(x=value, fill=choice)) +
-      geom_density(alpha=.35) +
-      labs(x="Overall score (Σ Importance × Presence across 5 aspects)",
-           y="Density", fill=NULL) +
+
+    list(
+      A = A, B = B, D = D, R = R,
+      mean_A = mean_A, mean_B = mean_B, mean_D = mean_D,
+      width_A = width_A, width_B = width_B, width_D = width_D,
+      p_AgtB = p_AgtB, p_BgtA = p_BgtA, p_within5 = p_within5,
+      threshold_stats = threshold_stats
+    )
+  })
+
+  # Decision Summary
+  output$decision_summary <- renderUI({
+    stats <- report_stats()
+
+    # Determine winner
+    if (stats$p_AgtB > 0.75) {
+      strength <- if (stats$p_AgtB > 0.90) "strongly" else "likely"
+      winner <- input$choiceA
+      prob <- stats$p_AgtB
+      diff <- stats$mean_D
+      icon_col <- COLORS$green
+    } else if (stats$p_BgtA > 0.75) {
+      strength <- if (stats$p_BgtA > 0.90) "strongly" else "likely"
+      winner <- input$choiceB
+      prob <- stats$p_BgtA
+      diff <- -stats$mean_D
+      icon_col <- COLORS$blue
+    } else {
+      # Too close to call
+      return(HTML(sprintf(
+        '<div style="color: %s;"><strong>📊 The choices are very close!</strong></div>
+        <p>The analysis shows that <strong>%s</strong> and <strong>%s</strong> are within 5%% of each other with <strong>%s</strong> probability.
+        The mean difference is only <strong>%.3f points</strong> (90%% interval width: %.3f).</p>
+        <p style="color: #666; font-size: 0.95rem;">💡 Consider: Are there other factors not captured in these aspects that might tip the balance?</p>',
+        COLORS$yellow,
+        input$choiceA, input$choiceB,
+        scales::percent(stats$p_within5, accuracy = 0.1),
+        abs(stats$mean_D), stats$width_D
+      )))
+    }
+
+    HTML(sprintf(
+      '<div style="color: %s;"><strong>✨ %s is %s the better choice!</strong></div>
+      <p>Based on your decision aspects, <strong>%s</strong> outperforms with <strong>%s</strong> probability.
+      The average advantage is <strong>%.3f points</strong> (90%% interval width: %.3f).</p>
+      <p style="color: #666; font-size: 0.95rem;">💡 This recommendation is based on %d included aspect(s). Adjust the sliders or toggle aspects to explore different scenarios.</p>',
+      icon_col,
+      winner, strength,
+      winner,
+      scales::percent(prob, accuracy = 0.1),
+      abs(diff), stats$width_D,
+      length(unlist(sapply(1:5, function(i) if (aspects[[i]]$include()) aspects[[i]]$name() else NULL)))
+    ))
+  })
+
+  # Overview cards
+  output$card_meanA <- renderText({
+    stats <- report_stats()
+    sprintf("%.3f", stats$mean_A)
+  })
+
+  output$card_meanB <- renderText({
+    stats <- report_stats()
+    sprintf("%.3f", stats$mean_B)
+  })
+
+  output$card_meanD <- renderText({
+    stats <- report_stats()
+    sprintf("%.3f\n(90%% width: %.3f)", stats$mean_D, stats$width_D)
+  })
+
+  output$card_pAgtB <- renderText({
+    stats <- report_stats()
+    scales::percent(stats$p_AgtB, accuracy = 0.1)
+  })
+
+  output$card_pBgtA <- renderText({
+    stats <- report_stats()
+    scales::percent(stats$p_BgtA, accuracy = 0.1)
+  })
+
+  output$card_pWithin5 <- renderText({
+    stats <- report_stats()
+    scales::percent(stats$p_within5, accuracy = 0.1)
+  })
+
+  # Plots
+  output$plot_distributions <- renderPlot({
+    stats <- report_stats()
+    long <- bind_rows(
+      tibble(value = stats$A, choice = input$choiceA),
+      tibble(value = stats$B, choice = input$choiceB)
+    )
+    ggplot(long, aes(x = value, fill = choice)) +
+      geom_density(alpha = 0.5) +
+      scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
+      labs(x = "Overall Score", y = "Density", fill = NULL) +
+      theme_minimal(base_size = 13) +
+      theme(legend.position = "top",
+            legend.text = element_text(size = 12, face = "bold"))
+  })
+
+  output$plot_difference <- renderPlot({
+    stats <- report_stats()
+    ggplot(tibble(D = stats$D), aes(x = D)) +
+      geom_density(fill = COLORS$purple, alpha = 0.5) +
+      geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
+      annotate("text", x = 0, y = Inf, label = "No difference",
+               vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
+      labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
       theme_minimal(base_size = 13)
   })
-  
-  output$overall_tbl <- renderTable({
-    od <- overall_draws(); req(od)
+
+  # Tables
+  output$tbl_thresholds <- renderTable({
+    stats <- report_stats()
+    stats$threshold_stats |>
+      mutate(across(-Margin, ~scales::percent(.x, accuracy = 0.1)))
+  }, striped = TRUE, bordered = TRUE, spacing = "s")
+
+  output$tbl_intervals <- renderTable({
+    stats <- report_stats()
     tibble(
-      choice = c(input$choiceA, input$choiceB),
-      mean   = c(mean(od$scoreA), mean(od$scoreB)),
-      width_90 = c(quantile(od$scoreA,.95)-quantile(od$scoreA,.05),
-                   quantile(od$scoreB,.95)-quantile(od$scoreB,.05))
-    ) |> mutate(across(-choice, ~round(.x,3)))
-  }, striped=TRUE, bordered=TRUE, spacing="s")
-  
-  output$summary_txt <- renderText({
-    od <- overall_draws(); req(od)
+      Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+      Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
+      `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
+    ) |> mutate(across(-Choice, ~round(.x, 3)))
+  }, striped = TRUE, bordered = TRUE, spacing = "s")
 
-    # Get included aspect names
-    included_names <- sapply(1:5, function(i) {
-      if (aspects[[i]]$include()) aspects[[i]]$name() else NULL
-    })
-    included_names <- unlist(included_names[!sapply(included_names, is.null)])
+  # HTML Download Handler
+  output$dl_html <- downloadHandler(
+    filename = function() {
+      paste0("decision_report_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".html")
+    },
+    content = function(file) {
+      # Check if rmarkdown is available
+      if (!requireNamespace("rmarkdown", quietly = TRUE)) {
+        showNotification(
+          "rmarkdown package required. Install with: install.packages('rmarkdown')",
+          type = "error",
+          duration = 10
+        )
+        return(NULL)
+      }
 
-    pAgtB <- mean(od$scoreA > od$scoreB)
-    paste0(
-      "Choices: ", input$choiceA, " vs ", input$choiceB, "\n",
-      "Included aspects (", length(included_names), "/5): ", paste(included_names, collapse = ", "), "\n\n",
-      "Computation (per aspect):\n",
-      "  Importance ~ Beta(α,β) from Importance slider, scaled by its Uncertainty;\n",
-      "  Presence_A, Presence_B ~ Beta(α,β) from Presence sliders, scaled by their Uncertainty.\n",
-      "Scores: Score_A = Σ Importance × Presence_A; Score_B analogously.\n",
-      "Sims: 5,000.\n",
-      "Result: P(A > B) = ", scales::percent(pAgtB, accuracy=0.1),
-      "\nMeans/width_90 shown above."
-    )
-  })
+      # Get stats
+      stats <- report_stats()
+
+      # Get included aspect names
+      included_names <- sapply(1:5, function(i) {
+        if (aspects[[i]]$include()) aspects[[i]]$name() else NULL
+      })
+      included_names <- unlist(included_names[!sapply(included_names, is.null)])
+      included_text <- paste(included_names, collapse = ", ")
+
+      # Save plots to temp files
+      overall_png <- file.path(tempdir(), "overall.png")
+      diff_png <- file.path(tempdir(), "diff.png")
+
+      p1 <- ggplot(bind_rows(
+        tibble(value = stats$A, choice = input$choiceA),
+        tibble(value = stats$B, choice = input$choiceB)
+      ), aes(x = value, fill = choice)) +
+        geom_density(alpha = 0.5) +
+        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
+        labs(x = "Overall Score", y = "Density", fill = NULL) +
+        theme_minimal(base_size = 13) +
+        theme(legend.position = "top",
+              legend.text = element_text(size = 12, face = "bold"))
+
+      p2 <- ggplot(tibble(D = stats$D), aes(x = D)) +
+        geom_density(fill = COLORS$purple, alpha = 0.5) +
+        geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
+        annotate("text", x = 0, y = Inf, label = "No difference",
+                 vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
+        labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
+        theme_minimal(base_size = 13)
+
+      ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
+      ggsave(diff_png, p2, width = 8, height = 4, dpi = 150)
+
+      # Prepare intervals table
+      intervals_tbl <- tibble(
+        Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+        Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
+        `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
+      )
+
+      # Prepare threshold stats table (already formatted for display)
+      threshold_tbl <- stats$threshold_stats %>%
+        mutate(across(-Margin, ~sprintf("%.1f%%", .x * 100)))
+
+      # Render to temp HTML then copy
+      tmp_html <- tempfile(fileext = ".html")
+      rmarkdown::render(
+        input = "report/report.Rmd",
+        output_format = rmarkdown::html_document(self_contained = TRUE, theme = "flatly"),
+        output_file = tmp_html,
+        params = list(
+          choiceA = input$choiceA,
+          choiceB = input$choiceB,
+          mean_A = stats$mean_A,
+          mean_B = stats$mean_B,
+          mean_D = stats$mean_D,
+          width_D = stats$width_D,
+          p_AgtB = stats$p_AgtB,
+          p_BgtA = stats$p_BgtA,
+          p_within5 = stats$p_within5,
+          threshold_stats = threshold_tbl,
+          intervals_tbl = intervals_tbl,
+          img_overall = overall_png,
+          img_diff = diff_png,
+          included_aspects = included_text
+        ),
+        envir = new.env(parent = globalenv())
+      )
+
+      file.copy(tmp_html, file, overwrite = TRUE)
+    }
+  )
+
+  # PDF Download Handler
+  output$dl_pdf <- downloadHandler(
+    filename = function() {
+      paste0("decision_report_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
+    },
+    content = function(file) {
+      # Check if rmarkdown is available
+      if (!requireNamespace("rmarkdown", quietly = TRUE)) {
+        showNotification(
+          "rmarkdown package required. Install with: install.packages('rmarkdown')",
+          type = "error",
+          duration = 10
+        )
+        return(NULL)
+      }
+
+      # Check if tinytex is available for PDF generation
+      if (!requireNamespace("tinytex", quietly = TRUE)) {
+        showNotification(
+          "PDF export requires tinytex package. Install with: install.packages('tinytex'); tinytex::install_tinytex()",
+          type = "error",
+          duration = 15
+        )
+        return(NULL)
+      }
+
+      if (!tinytex::is_tinytex()) {
+        showNotification(
+          "PDF export requires TinyTeX. Install with: tinytex::install_tinytex()",
+          type = "error",
+          duration = 15
+        )
+        return(NULL)
+      }
+
+      # Get stats
+      stats <- report_stats()
+
+      # Get included aspect names
+      included_names <- sapply(1:5, function(i) {
+        if (aspects[[i]]$include()) aspects[[i]]$name() else NULL
+      })
+      included_names <- unlist(included_names[!sapply(included_names, is.null)])
+      included_text <- paste(included_names, collapse = ", ")
+
+      # Save plots to temp files
+      overall_png <- file.path(tempdir(), "overall.png")
+      diff_png <- file.path(tempdir(), "diff.png")
+
+      p1 <- ggplot(bind_rows(
+        tibble(value = stats$A, choice = input$choiceA),
+        tibble(value = stats$B, choice = input$choiceB)
+      ), aes(x = value, fill = choice)) +
+        geom_density(alpha = 0.5) +
+        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
+        labs(x = "Overall Score", y = "Density", fill = NULL) +
+        theme_minimal(base_size = 13) +
+        theme(legend.position = "top",
+              legend.text = element_text(size = 12, face = "bold"))
+
+      p2 <- ggplot(tibble(D = stats$D), aes(x = D)) +
+        geom_density(fill = COLORS$purple, alpha = 0.5) +
+        geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
+        annotate("text", x = 0, y = Inf, label = "No difference",
+                 vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
+        labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
+        theme_minimal(base_size = 13)
+
+      ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
+      ggsave(diff_png, p2, width = 8, height = 4, dpi = 150)
+
+      # Prepare intervals table
+      intervals_tbl <- tibble(
+        Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+        Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
+        `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
+      )
+
+      # Prepare threshold stats table
+      threshold_tbl <- stats$threshold_stats %>%
+        mutate(across(-Margin, ~sprintf("%.1f%%", .x * 100)))
+
+      # Render to temp PDF then copy
+      tmp_pdf <- tempfile(fileext = ".pdf")
+      rmarkdown::render(
+        input = "report/report.Rmd",
+        output_format = rmarkdown::pdf_document(keep_tex = FALSE),
+        output_file = tmp_pdf,
+        params = list(
+          choiceA = input$choiceA,
+          choiceB = input$choiceB,
+          mean_A = stats$mean_A,
+          mean_B = stats$mean_B,
+          mean_D = stats$mean_D,
+          width_D = stats$width_D,
+          p_AgtB = stats$p_AgtB,
+          p_BgtA = stats$p_BgtA,
+          p_within5 = stats$p_within5,
+          threshold_stats = threshold_tbl,
+          intervals_tbl = intervals_tbl,
+          img_overall = overall_png,
+          img_diff = diff_png,
+          included_aspects = included_text
+        ),
+        envir = new.env(parent = globalenv())
+      )
+
+      file.copy(tmp_pdf, file, overwrite = TRUE)
+    }
+  )
 }
 
 shinyApp(ui, server)

@@ -1,0 +1,100 @@
+---
+title: "Decision Space Report"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M:%S')`"
+output:
+  html_document:
+    self_contained: true
+    theme: flatly
+  pdf_document:
+    keep_tex: false
+params:
+  choiceA: "Choice A"
+  choiceB: "Choice B"
+  mean_A: 0
+  mean_B: 0
+  mean_D: 0
+  width_D: 0
+  p_AgtB: 0
+  p_BgtA: 0
+  p_within5: 0
+  threshold_stats: !r NULL
+  intervals_tbl: !r NULL
+  img_overall: ""
+  img_diff: ""
+  included_aspects: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(knitr)
+if (requireNamespace("kableExtra", quietly = TRUE)) {
+  library(kableExtra)
+}
+```
+
+## Executive Summary
+
+This report compares **`r params$choiceA`** and **`r params$choiceB`** across multiple decision aspects using Monte Carlo simulation (5,000 iterations).
+
+**Included Aspects:** `r params$included_aspects`
+
+### Key Findings
+
+- **Mean Scores:** `r params$choiceA` = `r sprintf("%.3f", params$mean_A)`, `r params$choiceB` = `r sprintf("%.3f", params$mean_B)`
+- **Mean Difference:** `r sprintf("%.3f", params$mean_D)` (90% interval width: `r sprintf("%.3f", params$width_D)`)
+- **P(`r params$choiceA` > `r params$choiceB`):** `r sprintf("%.1f%%", params$p_AgtB * 100)`
+- **P(`r params$choiceB` > `r params$choiceA`):** `r sprintf("%.1f%%", params$p_BgtA * 100)`
+- **P(within 5%):** `r sprintf("%.1f%%", params$p_within5 * 100)` (ratio between 0.95 and 1.05)
+
+\newpage
+
+## Score Distributions
+
+```{r plot-distributions, out.width="100%", fig.align="center"}
+knitr::include_graphics(params$img_overall)
+```
+
+## Difference Distribution
+
+```{r plot-difference, out.width="100%", fig.align="center"}
+knitr::include_graphics(params$img_diff)
+```
+
+---
+
+## Advantage Thresholds
+
+The following table shows the probability that one choice has a substantial advantage over the other by various margins:
+
+```{r threshold-table}
+kable(params$threshold_stats, caption = "Probability of exceeding threshold margins") %>%
+  {if (requireNamespace("kableExtra", quietly = TRUE))
+    kable_styling(., bootstrap_options = c("striped", "hover"))
+   else .}
+```
+
+## Summary Statistics
+
+```{r intervals-table}
+kable(params$intervals_tbl, caption = "Mean scores and 90% interval widths") %>%
+  {if (requireNamespace("kableExtra", quietly = TRUE))
+    kable_styling(., bootstrap_options = c("striped", "hover"))
+   else .}
+```
+
+## Methodology
+
+Each decision aspect is modeled using Beta distributions parameterized from user-specified:
+- **Importance:** Relative weight of this aspect (0 = low, 1 = high)
+- **Uncertainty:** Confidence in the importance estimate (0 = very certain, 1 = very uncertain)
+- **Presence (A & B):** Degree to which each choice exhibits this aspect
+- **Uncertainty (A & B):** Confidence in presence estimates
+
+The overall score for each choice is computed as:
+$$\text{Score} = \sum_{i=1}^{n} \text{Importance}_i \times \text{Presence}_i$$
+
+where the sum is taken over all included aspects. All probabilities and statistics are estimated from 5,000 Monte Carlo draws.
+
+---
+
+*Generated with Decision Space v3 using Claude Code*
