@@ -50,13 +50,13 @@ This report compares **`r params$choiceA`** and **`r params$choiceB`** across mu
 
 ## Score Distributions
 
-```{r plot-distributions, fig.height=4}
+```{r plot-distributions, out.width="100%", fig.align="center"}
 knitr::include_graphics(params$img_overall)
 ```
 
 ## Difference Distribution
 
-```{r plot-difference, fig.height=4}
+```{r plot-difference, out.width="100%", fig.align="center"}
 knitr::include_graphics(params$img_diff)
 ```
 
