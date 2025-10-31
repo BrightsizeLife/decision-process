@@ -150,8 +150,8 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
       d <- draws()
       long <- bind_rows(
         transmute(d, value = imp,   dist = "Importance"),
-        transmute(d, value = presA, dist = "Presence A"),
-        transmute(d, value = presB, dist = "Presence B")
+        transmute(d, value = presA, dist = paste("Presence", choiceA_name())),
+        transmute(d, value = presB, dist = paste("Presence", choiceB_name()))
       )
       ggplot(long, aes(x = value)) +
         geom_density(fill = "grey60", alpha = 0.35) +
@@ -167,7 +167,7 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
     output$params <- renderTable({
       d <- draws()
       tibble(
-        dist = c("Importance","Presence A","Presence B"),
+        dist = c("Importance", paste("Presence", choiceA_name()), paste("Presence", choiceB_name())),
         mean = c(mean(d$imp), mean(d$presA), mean(d$presB)),
         width_90 = c(quantile(d$imp,.95) - quantile(d$imp,.05),
                      quantile(d$presA,.95) - quantile(d$presA,.05),
@@ -212,14 +212,14 @@ ui <- page_fluid(
                 # Overview cards
                 layout_column_wrap(
                   width = 1/3,
-                  card(card_header("Mean A"), verbatimTextOutput("card_meanA", placeholder = TRUE)),
-                  card(card_header("Mean B"), verbatimTextOutput("card_meanB", placeholder = TRUE)),
+                  card(uiOutput("header_meanA"), verbatimTextOutput("card_meanA", placeholder = TRUE)),
+                  card(uiOutput("header_meanB"), verbatimTextOutput("card_meanB", placeholder = TRUE)),
                   card(card_header("Mean Difference"), verbatimTextOutput("card_meanD", placeholder = TRUE))
                 ),
                 layout_column_wrap(
                   width = 1/3,
-                  card(card_header("P(A > B)"), verbatimTextOutput("card_pAgtB", placeholder = TRUE)),
-                  card(card_header("P(B > A)"), verbatimTextOutput("card_pBgtA", placeholder = TRUE)),
+                  card(uiOutput("header_pAgtB"), verbatimTextOutput("card_pAgtB", placeholder = TRUE)),
+                  card(uiOutput("header_pBgtA"), verbatimTextOutput("card_pBgtA", placeholder = TRUE)),
                   card(card_header("P(within 5%)"), verbatimTextOutput("card_pWithin5", placeholder = TRUE))
                 ),
                 # Plots
@@ -228,7 +228,7 @@ ui <- page_fluid(
                   plotOutput("plot_distributions", height = "300px")
                 ),
                 card(
-                  card_header("Difference Distribution (A - B)"),
+                  uiOutput("header_difference"),
                   plotOutput("plot_difference", height = "300px")
                 ),
                 # Tables
@@ -370,6 +370,27 @@ server <- function(input, output, session) {
       abs(diff), stats$width_D,
       length(unlist(sapply(1:5, function(i) if (aspects[[i]]$include()) aspects[[i]]$name() else NULL)))
     ))
+  })
+
+  # Dynamic card headers using reactive choice names
+  output$header_meanA <- renderUI({
+    card_header(paste("Mean", choiceA_name()))
+  })
+
+  output$header_meanB <- renderUI({
+    card_header(paste("Mean", choiceB_name()))
+  })
+
+  output$header_pAgtB <- renderUI({
+    card_header(paste0("P(", choiceA_name(), " > ", choiceB_name(), ")"))
+  })
+
+  output$header_pBgtA <- renderUI({
+    card_header(paste0("P(", choiceB_name(), " > ", choiceA_name(), ")"))
+  })
+
+  output$header_difference <- renderUI({
+    card_header(paste0("Difference Distribution (", choiceA_name(), " - ", choiceB_name(), ")"))
   })
 
   # Overview cards
