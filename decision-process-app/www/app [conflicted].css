@@ -1,0 +1,25 @@
+/* Group box styling for hierarchical sections */
+.group-box {
+  border-left: 4px solid #dee2e6;
+  background: #f9f9f9;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+}
+
+/* Section headers */
+h5 {
+  margin-top: 8px;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+/* Reduce spacing within group boxes */
+.group-box .form-group {
+  margin-bottom: 6px;
+}
+
+/* Hide default min/max labels and grid */
+.irs-min, .irs-max, .irs-grid, .irs-grid-pol, .irs-grid-text {
+  display: none !important;
+}

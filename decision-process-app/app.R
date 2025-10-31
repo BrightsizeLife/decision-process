@@ -32,12 +32,15 @@ map_importance_to_ab <- function(v) {
   c(alpha = alpha, beta = beta)
 }
 map_uncertainty_scale <- function(v) {
-  # v in [0,1]; L = ×100  -> H = ×0.25
-  100*(1 - v) + 0.25*v
+  # v ∈ [0,1]; 0 = tight, 1 = loose
+  # Log interpolation for wider uncertainty range
+  tight <- 400   # very tight
+  loose <- 0.02  # very loose
+  exp(log(tight) + (log(loose) - log(tight)) * v)
 }
 beta_draws <- function(alpha, beta, n=5000) rbeta(n, alpha, beta)
 
-aspect_module_ui <- function(id, idx) {
+aspect_module_ui <- function(id, idx, choiceA_name, choiceB_name) {
   ns <- NS(id)
   card(
     card_header(
@@ -51,25 +54,23 @@ aspect_module_ui <- function(id, idx) {
       # Name input
       textInput(ns("name"), "Name of aspect", value = paste("Aspect", idx)),
 
-      # Importance sliders (vertical stack)
-      tags$h6(style = "margin-top: 0.5rem; margin-bottom: 0.25rem;", "Importance"),
-      div(style = "margin-bottom: 0.75rem;",
-        sliderInput(ns("imp"), "Level", min=0, max=1, value=0.5, step=0.01),
+      # Aspect Importance group
+      tags$h5("Aspect Importance"),
+      div(class = "group-box",
+        sliderInput(ns("imp"), "Importance", min=0, max=1, value=0.5, step=0.01),
         sliderInput(ns("imp_unc"), "Uncertainty", min=0, max=1, value=0.4, step=0.01)
       ),
 
-      tags$hr(style = "margin: 0.5rem 0;"),
-
-      # Choice A sliders (vertical stack)
-      tags$h6(style = "margin-top: 0.5rem; margin-bottom: 0.25rem;", "Choice A"),
-      div(style = "margin-bottom: 0.75rem;",
+      # Choice A group (reactive name)
+      uiOutput(ns("choiceA_header")),
+      div(class = "group-box",
         sliderInput(ns("pres_a"), "Presence", min=0, max=1, value=0.6, step=0.01),
         sliderInput(ns("unc_a"), "Uncertainty", min=0, max=1, value=0.5, step=0.01)
       ),
 
-      # Choice B sliders (vertical stack)
-      tags$h6(style = "margin-top: 0.5rem; margin-bottom: 0.25rem;", "Choice B"),
-      div(style = "margin-bottom: 0.75rem;",
+      # Choice B group (reactive name)
+      uiOutput(ns("choiceB_header")),
+      div(class = "group-box",
         sliderInput(ns("pres_b"), "Presence", min=0, max=1, value=0.5, step=0.01),
         sliderInput(ns("unc_b"), "Uncertainty", min=0, max=1, value=0.5, step=0.01)
       ),
@@ -81,9 +82,18 @@ aspect_module_ui <- function(id, idx) {
   )
 }
 
-aspect_module_server <- function(id) {
+aspect_module_server <- function(id, choiceA_name, choiceB_name) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    # Render reactive choice headers
+    output$choiceA_header <- renderUI({
+      tags$h5(choiceA_name())
+    })
+
+    output$choiceB_header <- renderUI({
+      tags$h5(choiceB_name())
+    })
 
     # Observe include toggle and dim UI when excluded
     observe({
@@ -179,6 +189,7 @@ theme <- bs_theme(bootswatch = "flatly")
 ui <- page_fluid(
   theme = theme,
   useShinyjs(),
+  tags$head(tags$link(rel = "stylesheet", type = "text/css", href = "app.css")),
   titlePanel("Decision Space — Two-Choice, Five-Aspect Simulator"),
   layout_sidebar(
     sidebar = sidebar(
@@ -188,7 +199,7 @@ ui <- page_fluid(
     ),
     navset_card_pill(
       nav_panel("Decision Space",
-                lapply(1:5, function(i) aspect_module_ui(paste0("aspect", i), i))
+                lapply(1:5, function(i) aspect_module_ui(paste0("aspect", i), i, NULL, NULL))
       ),
       nav_panel("Report",
                 # Decision Summary
@@ -252,8 +263,14 @@ ui <- page_fluid(
 server <- function(input, output, session) {
   # fixed sims; button just re-runs reactives cleanly
   observeEvent(input$run, {}, ignoreInit = TRUE)
-  
-  aspects <- lapply(1:5, function(i) aspect_module_server(paste0("aspect", i)))
+
+  # Reactive choice names with fallbacks
+  choiceA_name <- reactive(ifelse(nzchar(input$choiceA), input$choiceA, "Choice A"))
+  choiceB_name <- reactive(ifelse(nzchar(input$choiceB), input$choiceB, "Choice B"))
+
+  aspects <- lapply(1:5, function(i) {
+    aspect_module_server(paste0("aspect", i), choiceA_name, choiceB_name)
+  })
   
   overall_draws <- reactive({
     # Filter to only included aspects
@@ -291,12 +308,14 @@ server <- function(input, output, session) {
     p_BgtA <- mean(B > A)
     p_within5 <- mean(R >= 0.95 & R <= 1.05)
 
-    # Threshold probabilities
+    # Threshold probabilities (use reactive names)
     thresholds <- c(0.05, 0.10, 0.20, 0.50)
+    nameA <- choiceA_name()
+    nameB <- choiceB_name()
     threshold_stats <- tibble(
       `Margin` = paste0(thresholds * 100, "%"),
-      `A has this advantage` = sapply(thresholds, function(tau) mean(A >= (1 + tau) * B)),
-      `B has this advantage` = sapply(thresholds, function(tau) mean(B >= (1 + tau) * A))
+      !!paste0(nameA, " has this advantage") := sapply(thresholds, function(tau) mean(A >= (1 + tau) * B)),
+      !!paste0(nameB, " has this advantage") := sapply(thresholds, function(tau) mean(B >= (1 + tau) * A))
     )
 
     list(
@@ -315,13 +334,13 @@ server <- function(input, output, session) {
     # Determine winner
     if (stats$p_AgtB > 0.75) {
       strength <- if (stats$p_AgtB > 0.90) "strongly" else "likely"
-      winner <- input$choiceA
+      winner <- choiceA_name()
       prob <- stats$p_AgtB
       diff <- stats$mean_D
       icon_col <- COLORS$green
     } else if (stats$p_BgtA > 0.75) {
       strength <- if (stats$p_BgtA > 0.90) "strongly" else "likely"
-      winner <- input$choiceB
+      winner <- choiceB_name()
       prob <- stats$p_BgtA
       diff <- -stats$mean_D
       icon_col <- COLORS$blue
@@ -333,7 +352,7 @@ server <- function(input, output, session) {
         The mean difference is only <strong>%.3f points</strong> (90%% interval width: %.3f).</p>
         <p style="color: #666; font-size: 0.95rem;">💡 Consider: Are there other factors not captured in these aspects that might tip the balance?</p>',
         COLORS$yellow,
-        input$choiceA, input$choiceB,
+        choiceA_name(), choiceB_name(),
         scales::percent(stats$p_within5, accuracy = 0.1),
         abs(stats$mean_D), stats$width_D
       )))
@@ -388,8 +407,8 @@ server <- function(input, output, session) {
   output$plot_distributions <- renderPlot({
     stats <- report_stats()
     long <- bind_rows(
-      tibble(value = stats$A, choice = input$choiceA),
-      tibble(value = stats$B, choice = input$choiceB)
+      tibble(value = stats$A, choice = choiceA_name()),
+      tibble(value = stats$B, choice = choiceB_name())
     )
     ggplot(long, aes(x = value, fill = choice)) +
       geom_density(alpha = 0.5) +
@@ -407,7 +426,7 @@ server <- function(input, output, session) {
       geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
       annotate("text", x = 0, y = Inf, label = "No difference",
                vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
-      labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
+      labs(x = paste(choiceA_name(), "-", choiceB_name()), y = "Density") +
       theme_minimal(base_size = 13)
   })
 
@@ -421,7 +440,7 @@ server <- function(input, output, session) {
   output$tbl_intervals <- renderTable({
     stats <- report_stats()
     tibble(
-      Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+      Choice = c(choiceA_name(), choiceB_name(), paste0("Difference (", choiceA_name(), " - ", choiceB_name(), ")")),
       Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
       `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
     ) |> mutate(across(-Choice, ~round(.x, 3)))
@@ -458,8 +477,8 @@ server <- function(input, output, session) {
       diff_png <- file.path(tempdir(), "diff.png")
 
       p1 <- ggplot(bind_rows(
-        tibble(value = stats$A, choice = input$choiceA),
-        tibble(value = stats$B, choice = input$choiceB)
+        tibble(value = stats$A, choice = choiceA_name()),
+        tibble(value = stats$B, choice = choiceB_name())
       ), aes(x = value, fill = choice)) +
         geom_density(alpha = 0.5) +
         scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
@@ -473,7 +492,7 @@ server <- function(input, output, session) {
         geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
         annotate("text", x = 0, y = Inf, label = "No difference",
                  vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
-        labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
+        labs(x = paste(choiceA_name(), "-", choiceB_name()), y = "Density") +
         theme_minimal(base_size = 13)
 
       ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
@@ -481,7 +500,7 @@ server <- function(input, output, session) {
 
       # Prepare intervals table
       intervals_tbl <- tibble(
-        Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+        Choice = c(choiceA_name(), choiceB_name(), paste0("Difference (", choiceA_name(), " - ", choiceB_name(), ")")),
         Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
         `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
       )
@@ -497,8 +516,8 @@ server <- function(input, output, session) {
         output_format = rmarkdown::html_document(self_contained = TRUE, theme = "flatly"),
         output_file = tmp_html,
         params = list(
-          choiceA = input$choiceA,
-          choiceB = input$choiceB,
+          choiceA = choiceA_name(),
+          choiceB = choiceB_name(),
           mean_A = stats$mean_A,
           mean_B = stats$mean_B,
           mean_D = stats$mean_D,
@@ -569,8 +588,8 @@ server <- function(input, output, session) {
       diff_png <- file.path(tempdir(), "diff.png")
 
       p1 <- ggplot(bind_rows(
-        tibble(value = stats$A, choice = input$choiceA),
-        tibble(value = stats$B, choice = input$choiceB)
+        tibble(value = stats$A, choice = choiceA_name()),
+        tibble(value = stats$B, choice = choiceB_name())
       ), aes(x = value, fill = choice)) +
         geom_density(alpha = 0.5) +
         scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
@@ -584,7 +603,7 @@ server <- function(input, output, session) {
         geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
         annotate("text", x = 0, y = Inf, label = "No difference",
                  vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
-        labs(x = paste(input$choiceA, "-", input$choiceB), y = "Density") +
+        labs(x = paste(choiceA_name(), "-", choiceB_name()), y = "Density") +
         theme_minimal(base_size = 13)
 
       ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
@@ -592,7 +611,7 @@ server <- function(input, output, session) {
 
       # Prepare intervals table
       intervals_tbl <- tibble(
-        Choice = c(input$choiceA, input$choiceB, paste0("Difference (", input$choiceA, " - ", input$choiceB, ")")),
+        Choice = c(choiceA_name(), choiceB_name(), paste0("Difference (", choiceA_name(), " - ", choiceB_name(), ")")),
         Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
         `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
       )
@@ -608,8 +627,8 @@ server <- function(input, output, session) {
         output_format = rmarkdown::pdf_document(keep_tex = FALSE),
         output_file = tmp_pdf,
         params = list(
-          choiceA = input$choiceA,
-          choiceB = input$choiceB,
+          choiceA = choiceA_name(),
+          choiceB = choiceB_name(),
           mean_A = stats$mean_A,
           mean_B = stats$mean_B,
           mean_D = stats$mean_D,
