@@ -47,7 +47,7 @@ aspect_module_ui <- function(id, idx, choiceA_name, choiceB_name) {
       div(style = "display: flex; justify-content: space-between; align-items: center;",
         span(paste("Decision Aspect", idx)),
         div(style = "display: flex; gap: 1rem; align-items: center;",
-          checkboxInput(ns("include"), "Include in analysis", value = TRUE, width = "auto"),
+          checkboxInput(ns("include"), "Include in analysis", value = (idx == 1), width = "auto"),
           checkboxInput(ns("negative"), "Negative valence", value = FALSE, width = "auto")
         )
       )
@@ -69,7 +69,7 @@ aspect_module_ui <- function(id, idx, choiceA_name, choiceB_name) {
       div(class = "group-box",
         layout_column_wrap(
           width = 1/2,
-          sliderInput(ns("pres_a"), uiOutput(ns("label_pres_a"), inline = TRUE), min=0, max=1, value=0.6, step=0.01),
+          sliderInput(ns("pres_a"), uiOutput(ns("label_pres_a"), inline = TRUE), min=0, max=1, value=0.5, step=0.01),
           sliderInput(ns("unc_a"), uiOutput(ns("label_unc_a"), inline = TRUE), min=0, max=1, value=0.5, step=0.01),
           sliderInput(ns("pres_b"), uiOutput(ns("label_pres_b"), inline = TRUE), min=0, max=1, value=0.5, step=0.01),
           sliderInput(ns("unc_b"), uiOutput(ns("label_unc_b"), inline = TRUE), min=0, max=1, value=0.5, step=0.01)
@@ -108,13 +108,15 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
     observe({
       if (input$include) {
         shinyjs::runjs(sprintf(
-          "document.getElementById('%s').style.opacity = '1';",
-          ns("content_wrapper")
+          "document.getElementById('%s').style.opacity = '1';
+           document.getElementById('%s').classList.remove('excluded-aspect');",
+          ns("content_wrapper"), ns("content_wrapper")
         ))
       } else {
         shinyjs::runjs(sprintf(
-          "document.getElementById('%s').style.opacity = '0.4';",
-          ns("content_wrapper")
+          "document.getElementById('%s').style.opacity = '0.4';
+           document.getElementById('%s').classList.add('excluded-aspect');",
+          ns("content_wrapper"), ns("content_wrapper")
         ))
       }
     })
@@ -162,7 +164,11 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
         transmute(d, value = imp,   dist = "Importance"),
         transmute(d, value = presA, dist = paste("Presence", choiceA_name())),
         transmute(d, value = presB, dist = paste("Presence", choiceB_name()))
-      )
+      ) %>%
+        mutate(dist = factor(dist, levels = c("Importance",
+                                               paste("Presence", choiceA_name()),
+                                               paste("Presence", choiceB_name()))))
+
       ggplot(long, aes(x = value)) +
         geom_density(fill = "grey60", alpha = 0.35) +
         facet_grid(dist ~ ., scales = "free_y", switch = "y") +

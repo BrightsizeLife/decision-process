@@ -24,6 +24,17 @@ h5 {
   display: none !important;
 }
 
+/* Excluded aspect styling */
+.excluded-aspect {
+  color: #dc3545 !important;
+}
+
+.excluded-aspect input,
+.excluded-aspect label,
+.excluded-aspect h5 {
+  color: #dc3545 !important;
+}
+
 /* GitHub icon link */
 .gh-link {
   position: absolute;
@@ -38,7 +49,7 @@ h5 {
 }
 
 .gh {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: #343a40;
 }
