@@ -292,12 +292,9 @@ ui <- page_fluid(
                 # Download buttons
                 card(
                   card_header("Export"),
-                  p("Download a complete report with all statistics and visualizations:",
+                  p("Download a complete HTML report with all statistics and visualizations:",
                     style = "font-size: 0.9rem; color: #666; margin-bottom: 1rem;"),
-                  div(style = "display: flex; gap: 0.5rem;",
-                    downloadButton("dl_html", "Download HTML", class = "btn-primary"),
-                    downloadButton("dl_pdf", "Download PDF", class = "btn-secondary")
-                  ),
+                  downloadButton("dl_html", "Download HTML Report", class = "btn-primary"),
                   p(style = "font-size: 0.85rem; color: #999; margin-top: 0.5rem;",
                     "Note: Use 'Open in Browser' for downloads if using RStudio Viewer")
                 )
@@ -781,137 +778,6 @@ server <- function(input, output, session) {
       )
 
       file.copy(tmp_html, file, overwrite = TRUE)
-    }
-  )
-
-  # PDF Download Handler
-  output$dl_pdf <- downloadHandler(
-    filename = function() {
-      paste0("decision_report_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".pdf")
-    },
-    content = function(file) {
-      # Check if rmarkdown is available
-      if (!requireNamespace("rmarkdown", quietly = TRUE)) {
-        showNotification(
-          "rmarkdown package required. Install with: install.packages('rmarkdown')",
-          type = "error",
-          duration = 10
-        )
-        return(NULL)
-      }
-
-      # Check if tinytex is available for PDF generation
-      if (!requireNamespace("tinytex", quietly = TRUE)) {
-        showNotification(
-          "PDF export requires tinytex package. Install with: install.packages('tinytex'); tinytex::install_tinytex()",
-          type = "error",
-          duration = 15
-        )
-        return(NULL)
-      }
-
-      if (!tinytex::is_tinytex()) {
-        showNotification(
-          "PDF export requires TinyTeX. Install with: tinytex::install_tinytex()",
-          type = "error",
-          duration = 15
-        )
-        return(NULL)
-      }
-
-      # Get stats
-      stats <- report_stats()
-
-      # Get included aspect names
-      included_names <- sapply(1:5, function(i) {
-        if (aspects[[i]]$include()) aspects[[i]]$name() else NULL
-      })
-      included_names <- unlist(included_names[!sapply(included_names, is.null)])
-      included_text <- paste(included_names, collapse = ", ")
-
-      # Save plots to temp files
-      overall_png <- file.path(tempdir(), "overall.png")
-      diff_png <- file.path(tempdir(), "diff.png")
-      aspects_png <- file.path(tempdir(), "aspects.png")
-
-      p1 <- ggplot(bind_rows(
-        tibble(value = stats$A, choice = choiceA_name()),
-        tibble(value = stats$B, choice = choiceB_name())
-      ) %>%
-        mutate(choice = factor(choice, levels = c(choiceA_name(), choiceB_name()))),
-      aes(x = value, fill = choice)) +
-        geom_density(alpha = 0.5) +
-        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
-        labs(x = "Overall Score", y = "Density", fill = NULL) +
-        theme_minimal(base_size = 13) +
-        theme(legend.position = "top",
-              legend.text = element_text(size = 12, face = "bold"))
-
-      p2 <- ggplot(tibble(D = stats$D), aes(x = D)) +
-        geom_density(fill = COLORS$purple, alpha = 0.5) +
-        geom_vline(xintercept = 0, linetype = "dashed", color = COLORS$red, linewidth = 1.2) +
-        annotate("text", x = 0, y = Inf, label = "No difference",
-                 vjust = 2, hjust = -0.1, color = COLORS$red, size = 4, fontface = "bold") +
-        labs(x = paste(choiceA_name(), "-", choiceB_name()), y = "Density") +
-        theme_minimal(base_size = 13)
-
-      p3 <- ggplot(stats$aspect_draws, aes(x = value, fill = choice)) +
-        geom_density(alpha = 0.5) +
-        scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
-        facet_wrap(~aspect, ncol = 1, scales = "free", strip.position = "left") +
-        labs(x = "Score Contribution", y = NULL, fill = NULL) +
-        theme_minimal(base_size = 12) +
-        theme(
-          legend.position = "top",
-          legend.text = element_text(size = 11, face = "bold"),
-          strip.placement = "outside",
-          strip.background = element_blank(),
-          strip.text = element_text(face = "bold", hjust = 0)
-        )
-
-      ggsave(overall_png, p1, width = 8, height = 4, dpi = 150)
-      ggsave(diff_png, p2, width = 8, height = 4, dpi = 150)
-      ggsave(aspects_png, p3, width = 8, height = 2 * nrow(stats$aspect_stats), dpi = 150)
-
-      # Prepare intervals table
-      intervals_tbl <- tibble(
-        Choice = c(choiceA_name(), choiceB_name(), paste0("Difference (", choiceA_name(), " - ", choiceB_name(), ")")),
-        Mean = c(stats$mean_A, stats$mean_B, stats$mean_D),
-        `90% Width` = c(stats$width_A, stats$width_B, stats$width_D)
-      )
-
-      # Prepare threshold stats table
-      threshold_tbl <- stats$threshold_stats %>%
-        mutate(across(-Margin, ~sprintf("%.1f%%", .x * 100)))
-
-      # Render to temp PDF then copy
-      tmp_pdf <- tempfile(fileext = ".pdf")
-      rmarkdown::render(
-        input = "report/report.Rmd",
-        output_format = rmarkdown::pdf_document(keep_tex = FALSE),
-        output_file = tmp_pdf,
-        params = list(
-          choiceA = choiceA_name(),
-          choiceB = choiceB_name(),
-          mean_A = stats$mean_A,
-          mean_B = stats$mean_B,
-          mean_D = stats$mean_D,
-          width_D = stats$width_D,
-          p_AgtB = stats$p_AgtB,
-          p_BgtA = stats$p_BgtA,
-          p_within5 = stats$p_within5,
-          threshold_stats = threshold_tbl,
-          intervals_tbl = intervals_tbl,
-          img_overall = overall_png,
-          img_diff = diff_png,
-          img_aspects = aspects_png,
-          aspect_tbl = stats$aspect_stats,
-          included_aspects = included_text
-        ),
-        envir = new.env(parent = globalenv())
-      )
-
-      file.copy(tmp_pdf, file, overwrite = TRUE)
     }
   )
 }
