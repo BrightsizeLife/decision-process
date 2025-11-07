@@ -24,14 +24,14 @@ h5 {
   display: none !important;
 }
 
-/* Excluded aspect styling */
-.excluded-aspect {
+/* Negative valence styling */
+.negative-aspect {
   color: #dc3545 !important;
 }
 
-.excluded-aspect input,
-.excluded-aspect label,
-.excluded-aspect h5 {
+.negative-aspect input,
+.negative-aspect label,
+.negative-aspect h5 {
   color: #dc3545 !important;
 }
 

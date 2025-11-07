@@ -108,15 +108,28 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
     observe({
       if (input$include) {
         shinyjs::runjs(sprintf(
-          "document.getElementById('%s').style.opacity = '1';
-           document.getElementById('%s').classList.remove('excluded-aspect');",
-          ns("content_wrapper"), ns("content_wrapper")
+          "document.getElementById('%s').style.opacity = '1';",
+          ns("content_wrapper")
         ))
       } else {
         shinyjs::runjs(sprintf(
-          "document.getElementById('%s').style.opacity = '0.4';
-           document.getElementById('%s').classList.add('excluded-aspect');",
-          ns("content_wrapper"), ns("content_wrapper")
+          "document.getElementById('%s').style.opacity = '0.4';",
+          ns("content_wrapper")
+        ))
+      }
+    })
+
+    # Observe negative valence toggle and add red text
+    observe({
+      if (input$negative) {
+        shinyjs::runjs(sprintf(
+          "document.getElementById('%s').classList.add('negative-aspect');",
+          ns("content_wrapper")
+        ))
+      } else {
+        shinyjs::runjs(sprintf(
+          "document.getElementById('%s').classList.remove('negative-aspect');",
+          ns("content_wrapper")
         ))
       }
     })
@@ -287,6 +300,70 @@ ui <- page_fluid(
                   ),
                   p(style = "font-size: 0.85rem; color: #999; margin-top: 0.5rem;",
                     "Note: Use 'Open in Browser' for downloads if using RStudio Viewer")
+                )
+      ),
+      nav_panel("Help",
+                card(
+                  card_header("How to Use Decision Space", class = "bg-info"),
+                  div(style = "padding: 1.5rem; line-height: 1.8;",
+                    tags$h4("The Purpose"),
+                    p("Complex decisions involve multiple aspects, each with varying importance and presence across your choices.
+                      Decision Space helps you think through these multifaceted tradeoffs by acknowledging that:"),
+                    tags$ul(
+                      tags$li(strong("Some aspects matter more than others"), " (importance)"),
+                      tags$li(strong("Each choice exhibits these aspects to different degrees"), " (presence)"),
+                      tags$li(strong("You're uncertain about both"), " (uncertainty)")
+                    ),
+
+                    tags$h4("Key Concepts", style = "margin-top: 2rem;"),
+                    tags$h5("Presence"),
+                    p(strong("Presence"), " measures how much a choice exhibits a particular aspect. For example:"),
+                    tags$ul(
+                      tags$li("If your aspect is \"Career Growth\" and Choice A offers many advancement opportunities, it has high presence."),
+                      tags$li("If Choice B offers limited growth, it has low presence for this aspect.")
+                    ),
+
+                    tags$h5("The Possible Worlds Framework"),
+                    p("Think of uncertainty as exploring ", strong("possible worlds"), ":"),
+                    tags$ul(
+                      tags$li(strong("Zero uncertainty"), " = Only one possible world. You're absolutely certain."),
+                      tags$li(strong("High uncertainty"), " = Many possible worlds. You can imagine many different outcomes.")
+                    ),
+                    p("The distribution curves show where you think things will ", em("likely"), " end up across these possible worlds."),
+
+                    tags$h4("Using the Sliders", style = "margin-top: 2rem;"),
+                    tags$h5("For Each Aspect, Ask Yourself:"),
+
+                    tags$h6("Importance"),
+                    tags$ul(
+                      tags$li(em("\"How much does this aspect matter to my overall decision?\""))
+                    ),
+
+                    tags$h6("Importance Uncertainty"),
+                    tags$ul(
+                      tags$li(em("\"How confident am I about this aspect's importance?\""))
+                    ),
+
+                    tags$h6("Presence (for each choice)"),
+                    tags$ul(
+                      tags$li(em("\"To what degree does this choice exhibit this aspect?\""))
+                    ),
+
+                    tags$h6("Presence Uncertainty (for each choice)"),
+                    tags$ul(
+                      tags$li(em("\"How confident am I about this assessment?\""))
+                    ),
+
+                    tags$h4("Special Features", style = "margin-top: 2rem;"),
+                    tags$ul(
+                      tags$li(strong("Include in analysis:"), " Uncheck to exclude an aspect temporarily (grayed out)"),
+                      tags$li(strong("Negative valence:"), " Check if high presence is ", em("bad"), " (e.g., Cost, Risk). Text turns red and this aspect ", em("subtracts"), " from the score.")
+                    ),
+
+                    tags$h4("Interpreting Results", style = "margin-top: 2rem;"),
+                    p("The Report tab shows probabilities and confidence intervals based on 5,000 simulated scenarios.
+                      These help you understand not just ", em("which"), " choice is better, but ", em("how confident"), " you can be in that assessment.")
+                  )
                 )
       )
     )
