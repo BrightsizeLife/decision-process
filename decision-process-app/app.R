@@ -46,7 +46,10 @@ aspect_module_ui <- function(id, idx, choiceA_name, choiceB_name) {
     card_header(
       div(style = "display: flex; justify-content: space-between; align-items: center;",
         span(paste("Decision Aspect", idx)),
-        checkboxInput(ns("include"), "Include in analysis", value = TRUE, width = "auto")
+        div(style = "display: flex; gap: 1rem; align-items: center;",
+          checkboxInput(ns("include"), "Include in analysis", value = TRUE, width = "auto"),
+          checkboxInput(ns("negative"), "Negative valence", value = FALSE, width = "auto")
+        )
       )
     ),
     # Main content container with conditional styling
@@ -142,13 +145,14 @@ aspect_module_server <- function(id, choiceA_name, choiceB_name) {
 
     draws <- reactive({
       p <- params()
+      valence <- if(input$negative) -1 else 1
       tibble(
         imp   = beta_draws(p$alpha[1], p$beta[1]),
         presA = beta_draws(p$alpha[2], p$beta[2]),
         presB = beta_draws(p$alpha[3], p$beta[3])
       ) |>
-        mutate(scoreA = imp * presA,
-               scoreB = imp * presB)
+        mutate(scoreA = valence * imp * presA,
+               scoreB = valence * imp * presB)
     })
 
     # vertical facets (one row per distribution)
@@ -314,8 +318,25 @@ server <- function(input, output, session) {
   report_stats <- reactive({
     od <- overall_draws(); req(od)
 
-    A <- od$scoreA
-    B <- od$scoreB
+    # Raw scores
+    A_raw <- od$scoreA
+    B_raw <- od$scoreB
+
+    # Normalize scores to [0, 1] range
+    all_scores <- c(A_raw, B_raw)
+    score_min <- min(all_scores)
+    score_max <- max(all_scores)
+    score_range <- score_max - score_min
+
+    # Handle edge case where all scores are identical
+    if (score_range < 1e-10) {
+      A <- rep(0.5, length(A_raw))
+      B <- rep(0.5, length(B_raw))
+    } else {
+      A <- (A_raw - score_min) / score_range
+      B <- (B_raw - score_min) / score_range
+    }
+
     D <- A - B
     R <- A / pmax(B, 1e-6)  # Clip small denominators
 
@@ -368,7 +389,8 @@ server <- function(input, output, session) {
         tibble(aspect = m$name(), choice = nameA, value = d$imp * d$presA),
         tibble(aspect = m$name(), choice = nameB, value = d$imp * d$presB)
       )
-    })
+    }) %>%
+      mutate(choice = factor(choice, levels = c(nameA, nameB)))
 
     list(
       A = A, B = B, D = D, R = R,
@@ -500,7 +522,9 @@ server <- function(input, output, session) {
     long <- bind_rows(
       tibble(value = stats$A, choice = choiceA_name()),
       tibble(value = stats$B, choice = choiceB_name())
-    )
+    ) %>%
+      mutate(choice = factor(choice, levels = c(choiceA_name(), choiceB_name())))
+
     ggplot(long, aes(x = value, fill = choice)) +
       geom_density(alpha = 0.5) +
       scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
@@ -599,7 +623,9 @@ server <- function(input, output, session) {
       p1 <- ggplot(bind_rows(
         tibble(value = stats$A, choice = choiceA_name()),
         tibble(value = stats$B, choice = choiceB_name())
-      ), aes(x = value, fill = choice)) +
+      ) %>%
+        mutate(choice = factor(choice, levels = c(choiceA_name(), choiceB_name()))),
+      aes(x = value, fill = choice)) +
         geom_density(alpha = 0.5) +
         scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
         labs(x = "Overall Score", y = "Density", fill = NULL) +
@@ -728,7 +754,9 @@ server <- function(input, output, session) {
       p1 <- ggplot(bind_rows(
         tibble(value = stats$A, choice = choiceA_name()),
         tibble(value = stats$B, choice = choiceB_name())
-      ), aes(x = value, fill = choice)) +
+      ) %>%
+        mutate(choice = factor(choice, levels = c(choiceA_name(), choiceB_name()))),
+      aes(x = value, fill = choice)) +
         geom_density(alpha = 0.5) +
         scale_fill_manual(values = c(COLORS$orange, COLORS$skyblue)) +
         labs(x = "Overall Score", y = "Density", fill = NULL) +
